@@ -44,6 +44,42 @@ def test_solve_success_contains_evidence():
         assert len(e["rejected_by"]) == body["filter_count"]
 
 
+def test_production_batch_smoke_returns_canonical_four_filters():
+    allowed = [143, 148, 341, 393, 563, 594, 689, 730, 742, 830, 979,
+               1045, 1221, 1522, 1610]
+    forbidden = list(range(438, 486))
+    r = client.post(
+        "/api/solve",
+        json={"allowed": allowed, "forbidden": forbidden, "limit": 8},
+    )
+    body = r.json()
+    assert body["ok"] and body["feasible"]
+    # fewest filters first: the canonical 4-filter optimum, not the
+    # lower-exposure 5-filter cover (704 < 1088 loses on filter count)
+    assert body["filter_count"] == 4
+    assert body["total_accepted_count"] == 1088
+    assert [(f["mask"], f["code"]) for f in body["filters"]] == [
+        (224, 64),
+        (608, 0),
+        (1536, 512),
+        (1736, 1216),
+    ]
+    # per-filter detail: exposure, hits and isolation of the forbidden block
+    for f in body["filters"]:
+        assert f["accepted_count"] == 2048 >> bin(f["mask"]).count("1")
+        assert f["forbidden_hits"] == []
+        assert f["hits"] == sorted(
+            x for x in allowed if (x & f["mask"]) == f["code"]
+        )
+    # coverage evidence: every allowed id accepted by at least one filter
+    assert {e["identifier"] for e in body["coverage"]} == set(allowed)
+    assert all(e["accepted_by"] for e in body["coverage"])
+    # every forbidden id 438..485 rejected by every one of the 4 filters
+    assert {e["identifier"] for e in body["forbidden_check"]} == set(forbidden)
+    for e in body["forbidden_check"]:
+        assert len(e["rejected_by"]) == 4
+
+
 def test_infeasible_within_limit_keeps_verdict():
     r = client.post(
         "/api/solve",

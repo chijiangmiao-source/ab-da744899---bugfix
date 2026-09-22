@@ -23,8 +23,12 @@ The solver searches for at most ``limit`` filters that, in order of priority
 It returns ``None`` when no feasible cover exists within the limit.  The
 search is an exact memoised set-cover DP: branching only over filters that
 cover a pivot (least uncovered) identifier keeps the search exhaustive
-without enumerating permutations, and a set-packing lower bound prunes
-branches that cannot beat the incumbent on objectives 3 and 4.
+without enumerating permutations, a set-packing lower bound prunes
+branches that cannot become feasible within the remaining budget, and
+memoisation over (uncovered set, remaining budget) makes the dynamic
+program exact -- every feasible combination is reachable, so the returned
+cover is globally optimal on objectives 3-5, not merely a good beam
+search incumbent.
 """
 from __future__ import annotations
 
@@ -108,39 +112,79 @@ def solve(
         # An allowed id is only co-accepted with a forbidden id: infeasible.
         return None
 
-    frontier: Dict[int, Tuple[int, Tuple[Pattern, ...]]] = {full: (0, ())}
-    frontier_width = 32
+    # compat[i]: bitmask of allowed ids that share at least one candidate
+    # filter with id i (i included).  Ids that are pairwise incompatible
+    # each need a dedicated filter, so any such set is an admissible
+    # set-packing lower bound on the number of filters still required.
+    compat = [0] * n_allowed
+    for cov in cover_bits:
+        b = cov
+        while b:
+            bit = b & -b
+            compat[bit.bit_length() - 1] |= cov
+            b ^= bit
 
-    for _ in range(limit):
-        next_frontier: Dict[int, Tuple[int, Tuple[Pattern, ...]]] = {}
-        for need, (total_cost, chosen) in frontier.items():
+    max_cover = max(cov.bit_count() for cov in cover_bits)
+
+    packing_cache: Dict[int, int] = {}
+
+    def packing_lower_bound(need: int) -> int:
+        """Greedy maximal pairwise-incompatible subset of ``need``."""
+        cached = packing_cache.get(need)
+        if cached is not None:
+            return cached
+        count = 0
+        avail = need
+        while avail:
+            bit = avail & -avail
+            count += 1
+            avail &= ~compat[bit.bit_length() - 1]
+        packing_cache[need] = count
+        return count
+
+    # Exact memoised DP.  best_cover(need, budget) returns the optimal
+    # (total cost, sorted pattern tuple) among covers of ``need`` using at
+    # most ``budget`` filters, or None when no such cover exists.  It is
+    # queried only for budgets below the first feasible filter count, so
+    # every cover it weighs uses exactly ``budget`` filters; combining the
+    # pivot filter with the optimal sub-cover (costs add, sorted tuples
+    # merge monotonically at equal length) therefore preserves the global
+    # objective order.
+    memo: Dict[Tuple[int, int], Optional[Tuple[int, Tuple[Pattern, ...]]]] = {}
+
+    def best_cover(need: int, budget: int) -> Optional[Tuple[int, Tuple[Pattern, ...]]]:
+        if need == 0:
+            return (0, ())
+        if budget == 0:
+            return None
+        key = (need, budget)
+        if key in memo:
+            return memo[key]
+        result: Optional[Tuple[int, Tuple[Pattern, ...]]] = None
+        if (
+            need.bit_count() <= budget * max_cover
+            and packing_lower_bound(need) <= budget
+        ):
             pivot = (need & -need).bit_length() - 1
             for i in owners[pivot]:
-                rest = need & ~cover_bits[i]
-                if rest == need:
+                sub = best_cover(need & ~cover_bits[i], budget - 1)
+                if sub is None:
                     continue
-                sequence = tuple(sorted(chosen + (patterns[i],)))
-                value = (total_cost + costs[i], sequence)
-                previous = next_frontier.get(rest)
-                if previous is None or value < previous:
-                    next_frontier[rest] = value
+                value = (
+                    costs[i] + sub[0],
+                    tuple(sorted(sub[1] + (patterns[i],))),
+                )
+                if result is None or value < result:
+                    result = value
+        memo[key] = result
+        return result
 
-        completed = next_frontier.get(0)
+    # Objective 3 (fewest filters) first: the smallest feasible budget is
+    # found before any cost/lexicographic comparison takes place.
+    for budget in range(1, limit + 1):
+        completed = best_cover(full, budget)
         if completed is not None:
             return list(completed[1])
-
-        ranked = sorted(
-            next_frontier.items(),
-            key=lambda item: (
-                item[0].bit_count(),
-                item[1][0],
-                item[1][1],
-                item[0],
-            ),
-        )
-        frontier = dict(ranked[:frontier_width])
-        if not frontier:
-            break
     return None
 
 

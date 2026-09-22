@@ -209,6 +209,29 @@ def main() -> int:
     )
     assert_solution_sound(body, allowed, forbidden, limit)
 
+    print("\n== production batch: fewest filters beats lower exposure ==")
+    prod_allowed = [143, 148, 341, 393, 563, 594, 689, 730, 742, 830, 979,
+                    1045, 1221, 1522, 1610]
+    prod_forbidden = list(range(438, 486))
+    body = post(f"{WEB_URL}/api/solve", {
+        "allowed": prod_allowed, "forbidden": prod_forbidden, "limit": 8,
+    })
+    check("production batch ok+feasible", body.get("ok") and body.get("feasible"),
+          str(body)[:200])
+    check("production batch uses 4 filters", body.get("filter_count") == 4,
+          f"got {body.get('filter_count')}")
+    check(
+        "production batch canonical sequence",
+        [(f["mask"], f["code"]) for f in body.get("filters", [])]
+        == [(224, 64), (608, 0), (1536, 512), (1736, 1216)],
+        str([(f["mask"], f["code"]) for f in body.get("filters", [])]),
+    )
+    check("production batch total exposure 1088",
+          body.get("total_accepted_count") == 1088,
+          f"got {body.get('total_accepted_count')}")
+    if body.get("feasible"):
+        assert_solution_sound(body, prod_allowed, prod_forbidden, 8)
+
     print("\n== exhaustive infeasibility verdict ==")
     body = post(f"{WEB_URL}/api/solve", {
         "allowed": [0, 3], "forbidden": [1], "limit": 1,
