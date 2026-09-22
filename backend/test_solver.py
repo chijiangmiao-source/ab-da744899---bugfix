@@ -105,6 +105,42 @@ def test_random_equivalence_with_brute_force():
             assert_sound(allowed, forbidden, limit, result)
 
 
+PRODUCTION_ALLOWED = [
+    143, 148, 341, 393, 563, 594, 689, 730, 742,
+    830, 979, 1045, 1221, 1522, 1610,
+]
+PRODUCTION_FORBIDDEN = list(range(438, 486))
+PRODUCTION_FILTERS = [(224, 64), (608, 0), (1536, 512), (1736, 1216)]
+PRODUCTION_EXPOSURE = 1088
+
+
+def test_production_batch_global_optimum():
+    # Regression: a beam search once returned 5 filters (exposure 704)
+    # because the state leading to the 4-filter optimum was truncated.
+    # Filter count dominates exposure: the 4-filter / 1088 solution wins.
+    result = solve(PRODUCTION_ALLOWED, PRODUCTION_FORBIDDEN, 8)
+    assert result == PRODUCTION_FILTERS
+    assert sum(accepted_count(m) for m, _ in result) == PRODUCTION_EXPOSURE
+    assert_sound(PRODUCTION_ALLOWED, PRODUCTION_FORBIDDEN, 8, result)
+    # every allowed id is accepted at least once
+    for x in PRODUCTION_ALLOWED:
+        assert any(accepts(m, c, x) for m, c in result)
+    # every forbidden id is rejected by every filter
+    for m, c in result:
+        for y in PRODUCTION_FORBIDDEN:
+            assert not accepts(m, c, y)
+    # the 4-filter optimum must be proven minimal: limit 3 is infeasible
+    assert solve(PRODUCTION_ALLOWED, PRODUCTION_FORBIDDEN, 3) is None
+
+
+def test_production_batch_is_timely():
+    import time
+
+    t0 = time.time()
+    solve(PRODUCTION_ALLOWED, PRODUCTION_FORBIDDEN, 8)
+    assert time.time() - t0 < 10
+
+
 def test_full_size_inputs_are_timely():
     rng = random.Random(42)
     allowed = rng.sample(range(ID_MAX), 20)

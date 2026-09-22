@@ -91,6 +91,37 @@ def test_boundary_counts_accepted():
     assert body["ok"] and body["feasible"]
 
 
+def test_production_batch_returns_global_optimum():
+    allowed = [
+        143, 148, 341, 393, 563, 594, 689, 730, 742,
+        830, 979, 1045, 1221, 1522, 1610,
+    ]
+    forbidden = list(range(438, 486))
+    body = client.post(
+        "/api/solve",
+        json={"allowed": allowed, "forbidden": forbidden, "limit": 8},
+    ).json()
+    assert body["ok"] and body["feasible"]
+    seq = [(f["mask"], f["code"]) for f in body["filters"]]
+    assert body["filter_count"] == 4
+    assert seq == [(224, 64), (608, 0), (1536, 512), (1736, 1216)]
+    assert body["total_accepted_count"] == 1088
+    # every allowed id is accepted at least once
+    assert all(e["accepted_by"] for e in body["coverage"])
+    assert {e["identifier"] for e in body["coverage"]} == set(allowed)
+    # every forbidden id is rejected by every filter
+    for e in body["forbidden_check"]:
+        assert e["rejected_by"] == [0, 1, 2, 3]
+    assert [e["identifier"] for e in body["forbidden_check"]] == forbidden
+    # fewer filters are provably infeasible
+    body3 = client.post(
+        "/api/solve",
+        json={"allowed": allowed, "forbidden": forbidden, "limit": 3},
+    ).json()
+    assert body3["feasible"] is False
+    assert "穷尽" in body3["message"]
+
+
 def test_too_many_allowed():
     body = client.post(
         "/api/solve",

@@ -290,6 +290,54 @@ def main() -> int:
         if got is not None:
             assert_solution_sound(body, a, f, lim)
 
+    print("\n== production batch: global optimum via real POST /api/solve ==")
+    prod_allowed = [
+        143, 148, 341, 393, 563, 594, 689, 730, 742,
+        830, 979, 1045, 1221, 1522, 1610,
+    ]
+    prod_forbidden = list(range(438, 486))
+    prod_filters = [(224, 64), (608, 0), (1536, 512), (1736, 1216)]
+    body = post(f"{API_URL}/api/solve", {
+        "allowed": prod_allowed,
+        "forbidden": prod_forbidden,
+        "limit": 8,
+    })
+    check("production batch ok+feasible",
+          body.get("ok") and body.get("feasible"), str(body)[:200])
+    if body.get("feasible"):
+        seq = [(f["mask"], f["code"]) for f in body["filters"]]
+        check("production batch uses 4 filters (not 5)",
+              body["filter_count"] == 4, str(seq))
+        check("production batch canonical (mask, code) sequence",
+              seq == prod_filters, f"got={seq} want={prod_filters}")
+        check("production batch total exposure 1088",
+              body["total_accepted_count"] == 1088,
+              str(body.get("total_accepted_count")))
+        assert_solution_sound(body, prod_allowed, prod_forbidden, 8)
+        covered = {x: False for x in prod_allowed}
+        for f in body["filters"]:
+            for x in f["hits"]:
+                covered[x] = True
+        check("production batch: every allowed id hit at least once",
+              all(covered.values()), str(covered))
+        all_rejected = all(
+            fc["rejected_by"] == list(range(4))
+            for fc in body["forbidden_check"]
+        )
+        check("production batch: each 438..485 id rejected by all 4 filters",
+              all_rejected)
+        check("production batch: forbidden evidence lists all 48 ids",
+              [fc["identifier"] for fc in body["forbidden_check"]]
+              == prod_forbidden)
+    body3 = post(f"{API_URL}/api/solve", {
+        "allowed": prod_allowed,
+        "forbidden": prod_forbidden,
+        "limit": 3,
+    })
+    check("production batch infeasible with only 3 filters",
+          body3.get("ok") is True and body3.get("feasible") is False
+          and "穷尽" in body3.get("message", ""), str(body3)[:200])
+
     print("\n== solver package: direct equivalence sweep ==")
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
